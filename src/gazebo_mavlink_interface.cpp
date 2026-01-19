@@ -500,6 +500,12 @@ void GazeboMavlinkInterface::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf
     int qgc_udp_port = _sdf->GetElement("qgc_udp_port")->Get<int>();
     mavlink_interface_->SetQgcUdpPort(qgc_udp_port);
   }
+  if (_sdf->HasElement("qgc_remote_addr")) {
+    std::string qgc_remote_addr = _sdf->GetElement("qgc_remote_addr")->Get<std::string>();
+    if (qgc_remote_addr != "INADDR_ANY") {
+      mavlink_interface_->SetQgcRemoteAddr(qgc_remote_addr);
+    }
+  }
 
   if (_sdf->HasElement("sdk_addr")) {
     std::string sdk_addr = _sdf->GetElement("sdk_addr")->Get<std::string>();

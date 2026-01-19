@@ -45,6 +45,14 @@ void MavlinkInterface::Load()
     remote_qgc_addr_.sin_family = AF_INET;
     remote_qgc_addr_.sin_port = htons(qgc_udp_port_);
     remote_qgc_addr_len_ = sizeof(remote_qgc_addr_);
+    remote_qgc_addr_.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (qgc_remote_addr_ != "INADDR_ANY") {
+      remote_qgc_addr_.sin_addr.s_addr = inet_addr(qgc_remote_addr_.c_str());
+      if (remote_qgc_addr_.sin_addr.s_addr == INADDR_NONE) {
+        std::cerr << "Invalid qgc_remote_addr: " << qgc_remote_addr_ << ", aborting\n";
+        abort();
+      }
+    }
 
     local_sdk_addr_.sin_family = AF_INET;
     local_sdk_addr_.sin_port = htons(0);

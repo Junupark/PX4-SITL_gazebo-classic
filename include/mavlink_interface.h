@@ -174,6 +174,7 @@ public:
     void SetMavlinkUdpPort(int mavlink_udp_port) {mavlink_udp_port_ = mavlink_udp_port;}
     void SetQgcAddr(std::string qgc_addr) {qgc_addr_ = qgc_addr;}
     void SetQgcUdpPort(int qgc_udp_port) {qgc_udp_port_ = qgc_udp_port;}
+    void SetQgcRemoteAddr(std::string qgc_remote_addr) {qgc_remote_addr_ = qgc_remote_addr;}
     void SetSdkAddr(std::string sdk_addr) {sdk_addr_ = sdk_addr;}
     void SetSdkUdpPort(int sdk_udp_port) {sdk_udp_port_ = sdk_udp_port;}
     void SetHILMode(bool hil_mode) {hil_mode_ = hil_mode;}
@@ -217,6 +218,7 @@ private:
     socklen_t remote_qgc_addr_len_;
     struct sockaddr_in local_qgc_addr_;
     std::string qgc_addr_{"INADDR_ANY"};
+    std::string qgc_remote_addr_{"INADDR_ANY"};
     socklen_t local_qgc_addr_len_;
 
     int sdk_udp_port_{kDefaultSDKUdpPort};
