@@ -20,6 +20,33 @@
  */
 
 #include <gazebo_mavlink_interface.h>
+
+namespace {
+
+// Reads `name` from the sdf. Falls back to `legacy_name`, the upstream name of the same
+// parameter, which most model files in this repository still use.
+template <typename T>
+bool ReadSdfParam(const sdf::ElementPtr &sdf, const std::string &name, const std::string &legacy_name, T &value)
+{
+  const bool has_name = sdf->HasElement(name);
+  const bool has_legacy = !legacy_name.empty() && sdf->HasElement(legacy_name);
+  if (has_name && has_legacy) {
+    gzwarn << "[gazebo_mavlink_interface] <" << name << "> and <" << legacy_name
+           << "> are both set; using <" << name << ">\n";
+  }
+  if (has_name) {
+    value = sdf->GetElement(name)->Get<T>();
+    return true;
+  }
+  if (has_legacy) {
+    value = sdf->GetElement(legacy_name)->Get<T>();
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 namespace gazebo {
 GZ_REGISTER_MODEL_PLUGIN(GazeboMavlinkInterface);
 
@@ -490,32 +517,43 @@ void GazeboMavlinkInterface::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf
     mavlink_interface_->SetMavlinkTcpPort(mavlink_tcp_port);
   }
 
-  if (_sdf->HasElement("qgc_addr")) {
-    std::string qgc_addr = _sdf->GetElement("qgc_addr")->Get<std::string>();
-    if (qgc_addr != "INADDR_ANY") {
-      mavlink_interface_->SetQgcAddr(qgc_addr);
-    }
+  // HIL UDP links. Each link has <link>_bind_addr, <link>_bind_port, <link>_remote_addr,
+  // <link>_remote_port and <link>_remote_fixed. <link>_addr and <link>_udp_port are the
+  // upstream names of <link>_bind_addr and <link>_remote_port.
+  std::string link_addr;
+  int link_port;
+  bool link_fixed;
+
+  if (ReadSdfParam(_sdf, "qgc_bind_addr", "qgc_addr", link_addr)) {
+    mavlink_interface_->SetQgcBindAddr(link_addr);
   }
-  if (_sdf->HasElement("qgc_udp_port")) {
-    int qgc_udp_port = _sdf->GetElement("qgc_udp_port")->Get<int>();
-    mavlink_interface_->SetQgcUdpPort(qgc_udp_port);
+  if (ReadSdfParam(_sdf, "qgc_bind_port", "", link_port)) {
+    mavlink_interface_->SetQgcBindPort(link_port);
   }
-  if (_sdf->HasElement("qgc_remote_addr")) {
-    std::string qgc_remote_addr = _sdf->GetElement("qgc_remote_addr")->Get<std::string>();
-    if (qgc_remote_addr != "INADDR_ANY") {
-      mavlink_interface_->SetQgcRemoteAddr(qgc_remote_addr);
-    }
+  if (ReadSdfParam(_sdf, "qgc_remote_addr", "", link_addr)) {
+    mavlink_interface_->SetQgcRemoteAddr(link_addr);
+  }
+  if (ReadSdfParam(_sdf, "qgc_remote_port", "qgc_udp_port", link_port)) {
+    mavlink_interface_->SetQgcRemotePort(link_port);
+  }
+  if (ReadSdfParam(_sdf, "qgc_remote_fixed", "", link_fixed)) {
+    mavlink_interface_->SetQgcRemoteFixed(link_fixed);
   }
 
-  if (_sdf->HasElement("sdk_addr")) {
-    std::string sdk_addr = _sdf->GetElement("sdk_addr")->Get<std::string>();
-    if (sdk_addr != "INADDR_ANY") {
-      mavlink_interface_->SetSdkAddr(sdk_addr);
-    }
+  if (ReadSdfParam(_sdf, "sdk_bind_addr", "sdk_addr", link_addr)) {
+    mavlink_interface_->SetSdkBindAddr(link_addr);
   }
-  if (_sdf->HasElement("sdk_udp_port")) {
-    int sdk_udp_port = _sdf->GetElement("sdk_udp_port")->Get<int>();
-    mavlink_interface_->SetSdkUdpPort(sdk_udp_port);
+  if (ReadSdfParam(_sdf, "sdk_bind_port", "", link_port)) {
+    mavlink_interface_->SetSdkBindPort(link_port);
+  }
+  if (ReadSdfParam(_sdf, "sdk_remote_addr", "", link_addr)) {
+    mavlink_interface_->SetSdkRemoteAddr(link_addr);
+  }
+  if (ReadSdfParam(_sdf, "sdk_remote_port", "sdk_udp_port", link_port)) {
+    mavlink_interface_->SetSdkRemotePort(link_port);
+  }
+  if (ReadSdfParam(_sdf, "sdk_remote_fixed", "", link_fixed)) {
+    mavlink_interface_->SetSdkRemoteFixed(link_fixed);
   }
 
   if (mavlink_interface_->SerialEnabled()) {
