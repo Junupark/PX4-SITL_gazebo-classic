@@ -172,11 +172,16 @@ public:
     void SetMavlinkAddr(std::string mavlink_addr) {mavlink_addr_str_ = mavlink_addr;}
     void SetMavlinkTcpPort(int mavlink_tcp_port) {mavlink_tcp_port_ = mavlink_tcp_port;}
     void SetMavlinkUdpPort(int mavlink_udp_port) {mavlink_udp_port_ = mavlink_udp_port;}
-    void SetQgcAddr(std::string qgc_addr) {qgc_addr_ = qgc_addr;}
-    void SetQgcUdpPort(int qgc_udp_port) {qgc_udp_port_ = qgc_udp_port;}
+    void SetQgcBindAddr(std::string qgc_bind_addr) {qgc_bind_addr_ = qgc_bind_addr;}
+    void SetQgcBindPort(int qgc_bind_port) {qgc_bind_port_ = qgc_bind_port;}
     void SetQgcRemoteAddr(std::string qgc_remote_addr) {qgc_remote_addr_ = qgc_remote_addr;}
-    void SetSdkAddr(std::string sdk_addr) {sdk_addr_ = sdk_addr;}
-    void SetSdkUdpPort(int sdk_udp_port) {sdk_udp_port_ = sdk_udp_port;}
+    void SetQgcRemotePort(int qgc_remote_port) {qgc_remote_port_ = qgc_remote_port;}
+    void SetQgcRemoteFixed(bool qgc_remote_fixed) {qgc_remote_fixed_ = qgc_remote_fixed;}
+    void SetSdkBindAddr(std::string sdk_bind_addr) {sdk_bind_addr_ = sdk_bind_addr;}
+    void SetSdkBindPort(int sdk_bind_port) {sdk_bind_port_ = sdk_bind_port;}
+    void SetSdkRemoteAddr(std::string sdk_remote_addr) {sdk_remote_addr_ = sdk_remote_addr;}
+    void SetSdkRemotePort(int sdk_remote_port) {sdk_remote_port_ = sdk_remote_port;}
+    void SetSdkRemoteFixed(bool sdk_remote_fixed) {sdk_remote_fixed_ = sdk_remote_fixed;}
     void SetHILMode(bool hil_mode) {hil_mode_ = hil_mode;}
     void SetHILStateLevel(bool hil_state_level) {hil_state_level_ = hil_state_level;}
 
@@ -194,6 +199,11 @@ private:
     void handle_actuator_controls(mavlink_message_t *msg);
     void acceptConnections();
     void RegisterNewHILSensorInstance(int id);
+    int SetupHilUdpLink(const std::string &link, const std::string &bind_addr, int bind_port,
+                        const std::string &remote_addr, int remote_port, bool remote_fixed,
+                        struct sockaddr_in &remote, socklen_t &remote_len);
+    void ReceiveFromHilUdpLink(int fd, mavlink_channel_t channel, bool remote_fixed,
+                               struct sockaddr_in &remote, socklen_t &remote_len);
 
     // Serial interface
     void open_serial();
@@ -213,20 +223,25 @@ private:
     struct sockaddr_in remote_simulator_addr_;
     socklen_t remote_simulator_addr_len_;
 
-    int qgc_udp_port_{kDefaultQGCUdpPort};
+    // HIL UDP links to QGC and to an SDK. Each link sends and receives on one socket.
+    // bind_*: the address of this socket. Port 0 lets the kernel pick a free port.
+    // remote_*: the destination before any packet arrives. When remote_fixed is false,
+    // each received packet replaces the destination with the packet's source address.
+    std::string qgc_bind_addr_{"INADDR_ANY"};
+    int qgc_bind_port_{0};
+    std::string qgc_remote_addr_{"INADDR_ANY"};
+    int qgc_remote_port_{kDefaultQGCUdpPort};
+    bool qgc_remote_fixed_{false};
     struct sockaddr_in remote_qgc_addr_;
     socklen_t remote_qgc_addr_len_;
-    struct sockaddr_in local_qgc_addr_;
-    std::string qgc_addr_{"INADDR_ANY"};
-    std::string qgc_remote_addr_{"INADDR_ANY"};
-    socklen_t local_qgc_addr_len_;
 
-    int sdk_udp_port_{kDefaultSDKUdpPort};
+    std::string sdk_bind_addr_{"INADDR_ANY"};
+    int sdk_bind_port_{0};
+    std::string sdk_remote_addr_{"INADDR_ANY"};
+    int sdk_remote_port_{kDefaultSDKUdpPort};
+    bool sdk_remote_fixed_{false};
     struct sockaddr_in remote_sdk_addr_;
     socklen_t remote_sdk_addr_len_;
-    struct sockaddr_in local_sdk_addr_;
-    socklen_t local_sdk_addr_len_;
-    std::string sdk_addr_{"INADDR_ANY"};
 
     unsigned char buf_[65535];
     enum FD_TYPES {

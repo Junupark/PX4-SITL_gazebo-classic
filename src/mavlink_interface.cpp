@@ -1,5 +1,32 @@
 #include "mavlink_interface.h"
 
+#include <arpa/inet.h>
+
+namespace {
+
+// Converts an IPv4 string from the sdf to network byte order. "INADDR_ANY" gives 0.0.0.0.
+in_addr_t ParseIpv4OrAbort(const std::string &addr, const std::string &param)
+{
+  if (addr == "INADDR_ANY") {
+    return htonl(INADDR_ANY);
+  }
+  const in_addr_t parsed = inet_addr(addr.c_str());
+  if (parsed == INADDR_NONE) {
+    std::cerr << "Invalid " << param << ": " << addr << ", aborting\n";
+    abort();
+  }
+  return parsed;
+}
+
+std::string ToString(const struct sockaddr_in &addr)
+{
+  char ip[INET_ADDRSTRLEN] = {};
+  inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+  return std::string(ip) + ":" + std::to_string(ntohs(addr.sin_port));
+}
+
+}  // namespace
+
 MavlinkInterface::MavlinkInterface() :
     serial_dev_(io_service_){
 
@@ -19,69 +46,13 @@ void MavlinkInterface::Load()
       abort();
     }
   }
-  local_qgc_addr_.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (qgc_addr_ != "INADDR_ANY") {
-    local_qgc_addr_.sin_addr.s_addr = inet_addr(qgc_addr_.c_str());
-    if (local_qgc_addr_.sin_addr.s_addr == INADDR_NONE) {
-      std::cerr << "Invalid qgc_addr: " << qgc_addr_ << ", aborting\n";
-      abort();
-    }
-  }
-  local_sdk_addr_.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (sdk_addr_ != "INADDR_ANY") {
-    local_sdk_addr_.sin_addr.s_addr = inet_addr(sdk_addr_.c_str());
-    if (local_sdk_addr_.sin_addr.s_addr == INADDR_NONE) {
-      std::cerr << "Invalid sdk_addr: " << sdk_addr_ << ", aborting\n";
-      abort();
-    }
-  }
-
   if (hil_mode_) {
-
-    local_qgc_addr_.sin_family = AF_INET;
-    local_qgc_addr_.sin_port = htons(0);
-    local_qgc_addr_len_ = sizeof(local_qgc_addr_);
-
-    remote_qgc_addr_.sin_family = AF_INET;
-    remote_qgc_addr_.sin_port = htons(qgc_udp_port_);
-    remote_qgc_addr_len_ = sizeof(remote_qgc_addr_);
-    remote_qgc_addr_.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (qgc_remote_addr_ != "INADDR_ANY") {
-      remote_qgc_addr_.sin_addr.s_addr = inet_addr(qgc_remote_addr_.c_str());
-      if (remote_qgc_addr_.sin_addr.s_addr == INADDR_NONE) {
-        std::cerr << "Invalid qgc_remote_addr: " << qgc_remote_addr_ << ", aborting\n";
-        abort();
-      }
-    }
-
-    local_sdk_addr_.sin_family = AF_INET;
-    local_sdk_addr_.sin_port = htons(0);
-    local_sdk_addr_len_ = sizeof(local_sdk_addr_);
-
-    remote_sdk_addr_.sin_family = AF_INET;
-    remote_sdk_addr_.sin_port = htons(sdk_udp_port_);
-    remote_sdk_addr_len_ = sizeof(remote_sdk_addr_);
-
-    if ((qgc_socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-      std::cerr << "Creating QGC UDP socket failed: " << strerror(errno) << ", aborting\n";
-      abort();
-    }
-
-    if (bind(qgc_socket_fd_, (struct sockaddr *)&local_qgc_addr_, local_qgc_addr_len_) < 0) {
-      std::cerr << "QGC UDP bind failed: " << strerror(errno) << ", aborting\n";
-      abort();
-    }
-
-    if ((sdk_socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-      std::cerr << "Creating SDK UDP socket failed: " << strerror(errno) << ", aborting\n";
-      abort();
-    }
-
-    if (bind(sdk_socket_fd_, (struct sockaddr *)&local_sdk_addr_, local_sdk_addr_len_) < 0) {
-      std::cerr << "SDK UDP bind failed: " << strerror(errno) << ", aborting\n";
-      abort();
-    }
-
+    qgc_socket_fd_ = SetupHilUdpLink("qgc", qgc_bind_addr_, qgc_bind_port_,
+                                     qgc_remote_addr_, qgc_remote_port_, qgc_remote_fixed_,
+                                     remote_qgc_addr_, remote_qgc_addr_len_);
+    sdk_socket_fd_ = SetupHilUdpLink("sdk", sdk_bind_addr_, sdk_bind_port_,
+                                     sdk_remote_addr_, sdk_remote_port_, sdk_remote_fixed_,
+                                     remote_sdk_addr_, remote_sdk_addr_len_);
   }
 
   if (serial_enabled_) {
@@ -475,32 +446,84 @@ void MavlinkInterface::pollFromQgcAndSdk()
   }
 
   if (fds[0].revents & POLLIN) {
-    int len = recvfrom(qgc_socket_fd_, buf_, sizeof(buf_), 0, (struct sockaddr *)&remote_qgc_addr_, &remote_qgc_addr_len_);
-
-    if (len > 0) {
-      mavlink_message_t msg;
-      mavlink_status_t status;
-      for (unsigned i = 0; i < len; ++i) {
-        if (mavlink_parse_char(MAVLINK_COMM_1, buf_[i], &msg, &status)) {
-          // forward message from QGC to serial
-          send_mavlink_message(&msg);
-        }
-      }
-    }
+    ReceiveFromHilUdpLink(qgc_socket_fd_, MAVLINK_COMM_1, qgc_remote_fixed_,
+                          remote_qgc_addr_, remote_qgc_addr_len_);
   }
 
   if (fds[1].revents & POLLIN) {
-    int len = recvfrom(sdk_socket_fd_, buf_, sizeof(buf_), 0, (struct sockaddr *)&remote_sdk_addr_, &remote_sdk_addr_len_);
+    ReceiveFromHilUdpLink(sdk_socket_fd_, MAVLINK_COMM_2, sdk_remote_fixed_,
+                          remote_sdk_addr_, remote_sdk_addr_len_);
+  }
+}
 
-    if (len > 0) {
-      mavlink_message_t msg;
-      mavlink_status_t status;
-      for (unsigned i = 0; i < len; ++i) {
-        if (mavlink_parse_char(MAVLINK_COMM_2, buf_[i], &msg, &status)) {
-          // forward message from SDK to serial
-          send_mavlink_message(&msg);
-        }
-      }
+int MavlinkInterface::SetupHilUdpLink(const std::string &link, const std::string &bind_addr, int bind_port,
+                                      const std::string &remote_addr, int remote_port, bool remote_fixed,
+                                      struct sockaddr_in &remote, socklen_t &remote_len)
+{
+  struct sockaddr_in local;
+  memset(&local, 0, sizeof(local));
+  local.sin_family = AF_INET;
+  local.sin_addr.s_addr = ParseIpv4OrAbort(bind_addr, link + "_bind_addr");
+  local.sin_port = htons(bind_port);
+
+  memset(&remote, 0, sizeof(remote));
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = ParseIpv4OrAbort(remote_addr, link + "_remote_addr");
+  remote.sin_port = htons(remote_port);
+  remote_len = sizeof(remote);
+
+  // With the same fixed port on both ends and a destination on this host, the socket
+  // sends every FCU message to itself and writes it back to the FCU.
+  const in_addr_t remote_ip = remote.sin_addr.s_addr;
+  const bool remote_on_this_host = remote_ip == htonl(INADDR_ANY)
+                                   || (ntohl(remote_ip) >> 24) == 127
+                                   || remote_ip == local.sin_addr.s_addr;
+  if (bind_port != 0 && bind_port == remote_port && remote_on_this_host) {
+    std::cerr << link << "_bind_port and " << link << "_remote_port are both " << bind_port
+              << " and " << link << "_remote_addr (" << remote_addr << ") is this host;"
+              << " set " << link << "_remote_addr to the peer's IP, aborting\n";
+    abort();
+  }
+
+  const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) {
+    std::cerr << "Creating " << link << " UDP socket failed: " << strerror(errno) << ", aborting\n";
+    abort();
+  }
+
+  if (bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0) {
+    std::cerr << link << " UDP bind to " << ToString(local) << " failed: " << strerror(errno)
+              << ", aborting\n";
+    abort();
+  }
+
+  socklen_t local_len = sizeof(local);
+  getsockname(fd, (struct sockaddr *)&local, &local_len);
+  std::cout << "[mavlink_interface] " << link << " link: bound to " << ToString(local)
+            << ", sends to " << ToString(remote)
+            << (remote_fixed ? " (fixed)" : " (replaced by the source of each received packet)")
+            << "\n";
+  return fd;
+}
+
+void MavlinkInterface::ReceiveFromHilUdpLink(int fd, mavlink_channel_t channel, bool remote_fixed,
+                                             struct sockaddr_in &remote, socklen_t &remote_len)
+{
+  // recvfrom() writes the packet's source address into `remote`, which becomes the
+  // destination of the next forwarded FCU message. A fixed link does not pass `remote`.
+  const ssize_t len = remote_fixed
+                      ? recvfrom(fd, buf_, sizeof(buf_), 0, nullptr, nullptr)
+                      : recvfrom(fd, buf_, sizeof(buf_), 0, (struct sockaddr *)&remote, &remote_len);
+  if (len <= 0) {
+    return;
+  }
+
+  mavlink_message_t msg;
+  mavlink_status_t status;
+  for (ssize_t i = 0; i < len; ++i) {
+    if (mavlink_parse_char(channel, buf_[i], &msg, &status)) {
+      // forward the message from QGC or the SDK to serial
+      send_mavlink_message(&msg);
     }
   }
 }
